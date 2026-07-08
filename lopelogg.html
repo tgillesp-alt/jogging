@@ -167,6 +167,11 @@
     font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--teal);
     margin-top:8px;min-height:16px;
   }
+  .details-toggle{
+    background:none;border:none;color:var(--teal);font-size:12px;
+    font-family:'IBM Plex Mono',monospace;cursor:pointer;padding:8px 0;
+    text-align:left;width:100%;
+  }
 
   /* charts */
   .chart-card{
@@ -275,20 +280,26 @@
         <input type="date" id="fDate">
       </div>
       <div class="field">
+        <label>Distanse (km)</label>
+        <input type="number" step="0.01" id="fDist" placeholder="2.18" oninput="updatePacePreview()">
+      </div>
+      <div class="field full">
+        <label>Tid (mm:ss)</label>
+        <input type="text" id="fDur" placeholder="25:35" oninput="updatePacePreview()">
+      </div>
+    </div>
+    <div class="pace-preview" id="pacePreview"></div>
+
+    <button type="button" class="details-toggle" id="detailsToggle" onclick="toggleDetails()">+ Flere detaljer (puls, type, sted, kommentar)</button>
+
+    <div class="form-grid extra-fields" id="extraFields" style="display:none;">
+      <div class="field">
         <label>Type</label>
         <select id="fType">
           <option value="Intervall">Intervall</option>
           <option value="Sammenhengende">Sammenhengende</option>
           <option value="Langtur">Langtur</option>
         </select>
-      </div>
-      <div class="field">
-        <label>Distanse (km)</label>
-        <input type="number" step="0.01" id="fDist" placeholder="2.18" oninput="updatePacePreview()">
-      </div>
-      <div class="field">
-        <label>Tid (mm:ss)</label>
-        <input type="text" id="fDur" placeholder="25:35" oninput="updatePacePreview()">
       </div>
       <div class="field">
         <label>Snittpuls (bpm)</label>
@@ -298,20 +309,21 @@
         <label>Kalorier</label>
         <input type="number" id="fCal" placeholder="150">
       </div>
-      <div class="field full">
+      <div class="field">
         <label>Sted</label>
         <input type="text" id="fLoc" placeholder="Frognerparken">
       </div>
       <div class="field full">
-        <label>Notat</label>
+        <label>Kommentar</label>
         <textarea id="fNotes" placeholder="Følelse, vær, sko, osv."></textarea>
       </div>
     </div>
-    <div class="pace-preview" id="pacePreview"></div>
+
     <div class="form-actions">
-      <button class="btn-primary" onclick="saveRun()">Lagre løpetur</button>
+      <button class="btn-primary" id="formSubmitBtn" onclick="saveRun()">Lagre løpetur</button>
       <button class="btn-secondary" onclick="closeForm()">Avbryt</button>
     </div>
+  </div>
   </div>
 
   <div class="section-title">Fartsutvikling</div>
@@ -401,15 +413,56 @@ async function persistGoal(){
 }
 
 // ---- form toggling ----
-document.getElementById('toggleFormBtn').addEventListener('click', ()=>{
+let editingId = null;
+
+document.getElementById('toggleFormBtn').addEventListener('click', ()=> openForm());
+
+function openForm(run){
+  editingId = run ? run.id : null;
   document.getElementById('formPanel').classList.add('open');
   document.getElementById('toggleFormBtn').style.display = 'none';
-});
+  document.getElementById('formSubmitBtn').textContent = run ? 'Lagre endringer' : 'Lagre løpetur';
+
+  if(run){
+    document.getElementById('fDate').value = run.date;
+    document.getElementById('fDist').value = run.dist;
+    document.getElementById('fDur').value = Math.floor(run.durMin) + ':' + String(Math.round((run.durMin%1)*60)).padStart(2,'0');
+    document.getElementById('fType').value = run.type;
+    document.getElementById('fHr').value = run.hr || '';
+    document.getElementById('fCal').value = run.cal || '';
+    document.getElementById('fLoc').value = run.loc || '';
+    document.getElementById('fNotes').value = run.notes || '';
+    document.getElementById('extraFields').style.display = 'grid';
+    document.getElementById('detailsToggle').style.display = 'none';
+    updatePacePreview();
+  } else {
+    document.getElementById('fDate').value = todayStr();
+  }
+  document.getElementById('formPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function editRun(id){
+  const run = runs.find(r=>r.id===id);
+  if(run) openForm(run);
+}
+
+function toggleDetails(){
+  const box = document.getElementById('extraFields');
+  const btn = document.getElementById('detailsToggle');
+  const showing = box.style.display === 'grid';
+  box.style.display = showing ? 'none' : 'grid';
+  btn.textContent = showing ? '+ Flere detaljer (puls, type, sted, kommentar)' : '– Skjul detaljer';
+}
+
 function closeForm(){
   document.getElementById('formPanel').classList.remove('open');
   document.getElementById('toggleFormBtn').style.display = 'flex';
   ['fDist','fDur','fHr','fCal','fLoc','fNotes'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('pacePreview').textContent = '';
+  document.getElementById('extraFields').style.display = 'none';
+  document.getElementById('detailsToggle').style.display = 'block';
+  document.getElementById('detailsToggle').textContent = '+ Flere detaljer (puls, type, sted, kommentar)';
+  editingId = null;
 }
 
 function parseDuration(str){
@@ -454,11 +507,19 @@ async function saveRun(){
   }
 
   try{
-    await fetch(`${SUPABASE_URL}/rest/v1/runs`, {
-      method:'POST',
-      headers: sbHeaders({'Prefer':'return=minimal'}),
-      body: JSON.stringify({ date, type, dist, dur_min: durMin, hr, cal, loc, notes })
-    });
+    if(editingId){
+      await fetch(`${SUPABASE_URL}/rest/v1/runs?id=eq.${editingId}`, {
+        method:'PATCH',
+        headers: sbHeaders({'Prefer':'return=minimal'}),
+        body: JSON.stringify({ date, type, dist, dur_min: durMin, hr, cal, loc, notes })
+      });
+    } else {
+      await fetch(`${SUPABASE_URL}/rest/v1/runs`, {
+        method:'POST',
+        headers: sbHeaders({'Prefer':'return=minimal'}),
+        body: JSON.stringify({ date, type, dist, dur_min: durMin, hr, cal, loc, notes })
+      });
+    }
   }catch(e){ console.error('Kunne ikke lagre løpetur', e); alert('Kunne ikke lagre. Sjekk internettforbindelsen.'); return; }
 
   closeForm();
@@ -599,7 +660,8 @@ function renderList(){
         ${r.notes ? `<div class="run-notes">"${r.notes}"</div>` : ''}
       </div>
       <div class="run-actions">
-        <button class="del-btn" onclick="deleteRun(${r.id})">✕</button>
+        <button class="del-btn" onclick="editRun(${r.id})" title="Rediger">✎</button>
+        <button class="del-btn" onclick="deleteRun(${r.id})" title="Slett">✕</button>
       </div>
     </div>`;
   }).join('');
